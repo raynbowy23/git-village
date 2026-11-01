@@ -1,0 +1,32 @@
+# Copy to your profile repository as .github/workflows/village.yml.
+# Embed <img src="village/village.gif" width="512" alt="My commit village"> in README.md.
+name: Profile village
+on:
+  schedule:
+    - cron: "20 0 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: profile-village
+jobs:
+  draw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install from source until release binaries exist
+        run: cargo install --git https://github.com/raynbowy23/git-village --locked
+      - name: Collect public commits and render
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROFILE_LOGIN: ${{ github.repository_owner }}
+        run: |
+          git-village collect "$PROFILE_LOGIN" --output "$RUNNER_TEMP/snapshot.json"
+          git-village render "$RUNNER_TEMP/snapshot.json" --output-dir village
+      - name: Commit changed GIF
+        run: |
+          git add village/village.gif
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update profile village"
+          git push

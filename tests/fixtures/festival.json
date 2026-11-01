@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "account_id": 42,
+  "login": "pixel-city",
+  "created_on": "2021-05-10",
+  "observed_on": "2026-11-01",
+  "total_commits": 200000,
+  "daily_commits": {
+    "2026-11-01": 90000,
+    "2026-10-31": 90000,
+    "2026-10-25": 1,
+    "2026-10-18": 1,
+    "2026-10-11": 1,
+    "2026-10-04": 1,
+    "2026-09-27": 1,
+    "2026-09-20": 1,
+    "2026-09-13": 1,
+    "2026-09-06": 1,
+    "2026-08-30": 1,
+    "2026-08-23": 1,
+    "2026-08-16": 1,
+    "2026-08-09": 1
+  },
+  "languages": [
+    {
+      "name": "Rust",
+      "color": "#dea584",
+      "commits": 40000,
+      "arm_earned_on": "2021-05-10"
+    },
+    {
+      "name": "Python",
+      "color": "#3572a5",
+      "commits": 40000,
+      "arm_earned_on": "2021-05-10"
+    },
+    {
+      "name": "TypeScript",
+      "color": "#3178c6",
+      "commits": 40000,
+      "arm_earned_on": "2021-05-10"
+    },
+    {
+      "name": "Go",
+      "color": "#00add8",
+      "commits": 40000,
+      "arm_earned_on": "2021-05-10"
+    },
+    {
+      "name": "Ruby",
+      "color": "#701516",
+      "commits": 40000,
+      "arm_earned_on": "2021-05-10"
+    }
+  ],
+  "detail_truncated": false
+}

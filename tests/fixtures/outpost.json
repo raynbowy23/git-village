@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "account_id": 42,
+  "login": "pixel-city",
+  "created_on": "2021-05-10",
+  "observed_on": "2026-11-01",
+  "total_commits": 0,
+  "daily_commits": {},
+  "languages": [],
+  "detail_truncated": false
+}

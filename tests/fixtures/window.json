@@ -1,0 +1,87 @@
+{
+  "user": {
+    "contributionsCollection": {
+      "commitContributionsByRepository": [
+        {
+          "repository": {
+            "primaryLanguage": {
+              "name": "Rust",
+              "color": null
+            },
+            "name": "synthetic-public-only",
+          "visibility": "PUBLIC"
+          },
+          "contributions": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "occurredAt": "2026-10-21T07:00:00Z",
+                "commitCount": 5
+              }
+            ]
+          }
+        },
+        {
+          "repository": {
+            "primaryLanguage": null,
+            "name": "synthetic-public-only",
+          "visibility": "PUBLIC"
+          },
+          "contributions": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "occurredAt": "2026-10-21T07:00:00Z",
+                "commitCount": 2
+              }
+            ]
+          }
+        },
+        {
+          "repository": {
+            "visibility": "PRIVATE",
+            "primaryLanguage": {
+              "name": "Excluded",
+              "color": "#000000"
+            }
+          },
+          "contributions": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "occurredAt": "2026-10-21T07:00:00Z",
+                "commitCount": 9000
+              }
+            ]
+          }
+        },
+        {
+          "repository": {
+            "visibility": "INTERNAL",
+            "primaryLanguage": {
+              "name": "Excluded",
+              "color": "#000000"
+            }
+          },
+          "contributions": {
+            "pageInfo": {
+              "hasNextPage": false
+            },
+            "nodes": [
+              {
+                "occurredAt": "2026-10-21T07:00:00Z",
+                "commitCount": 9000
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
