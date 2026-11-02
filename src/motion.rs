@@ -63,12 +63,12 @@ pub struct Pose {
     /// Clockwise segment, zero through three.
     pub facing: usize,
 }
-/// Number of vehicles, logarithmic and monotonic in monthly activity.
-pub fn vehicle_count(recent_commits: u64, stage: usize) -> usize {
+/// Number of vehicles, logarithmic and monotonic in monthly activity, before the city's size is added.
+pub fn vehicle_count(recent_commits: u64) -> usize {
     if recent_commits == 0 {
         0
     } else {
-        (1 + recent_commits.ilog2() as usize * 2).min((stage + 1) * 5)
+        1 + recent_commits.ilog2() as usize * 2
     }
 }
 /// A traffic assignment to one district circuit and phase.
@@ -81,38 +81,25 @@ pub struct Vehicle {
     /// Whole-loop phase offset.
     pub phase: usize,
 }
-/// Spread agents across every district before filling another slot on a circuit.
+/// How many agents a city of this size adds. It never stops growing, but slows down, because every agent adds to every frame of the GIF and GitHub refuses files over 100 MB.
+pub fn crowd(size: usize) -> usize {
+    (size as f64).powf(0.7) as usize
+}
+/// Spread agents around the whole city before filling another slot on a circuit. A larger city carries more traffic.
 pub fn traffic(plan: &crate::plan::CityPlan, stage: usize, recent: u64) -> Vec<Vehicle> {
-    let count = vehicle_count(recent, stage);
-    let mut longest = std::collections::BTreeMap::<usize, usize>::new();
-    for (i, route) in plan
+    let count = match vehicle_count(recent) {
+        0 => 0,
+        count => count + crowd(plan.roads.len()) / 2,
+    };
+    let mut spread: Vec<_> = plan
         .roads
         .iter()
         .enumerate()
-        .filter(|(_, r)| r.points.len() > 2 && r.length() >= 40)
-    {
-        let entry = longest.entry(route.district).or_insert(i);
-        if route.length() > plan.roads[*entry].length() {
-            *entry = i;
-        }
-    }
-    let routes: Vec<_> = longest.into_values().collect();
-    let mut result = Vec::new();
-    let mut ordered = routes.clone();
-    ordered.sort_by_key(|&i| (plan.roads[i].district, i));
-    // Give each district its first vehicle, then share the rest across the network.
-    let mut districts = std::collections::BTreeSet::new();
-    let mut spread: Vec<_> = ordered
-        .iter()
-        .copied()
-        .filter(|&i| districts.insert(plan.roads[i].district))
+        .filter(|(_, route)| route.points.len() > 2 && route.length() >= 40)
+        .map(|(i, _)| i)
         .collect();
-    spread.extend(
-        ordered
-            .iter()
-            .copied()
-            .filter(|i| !spread_contains_first(&plan.roads, *i, &ordered)),
-    );
+    spread.sort_by_key(|&i| (plan.roads[i].district, i));
+    let mut result = Vec::new();
     for slot in 0..4 {
         for &route in &spread {
             let capacity = (plan.roads[route].length() / 24).clamp(1, 4) as usize;
@@ -144,13 +131,6 @@ pub fn traffic(plan: &crate::plan::CityPlan, stage: usize, recent: u64) -> Vec<V
         }
     }
     result
-}
-fn spread_contains_first(roads: &[crate::plan::Route], i: usize, ordered: &[usize]) -> bool {
-    ordered
-        .iter()
-        .copied()
-        .find(|&j| roads[j].district == roads[i].district)
-        == Some(i)
 }
 /// Vehicle body sampled along the same circuit, including corners.
 pub fn vehicle_body(plan: &crate::plan::CityPlan, vehicle: Vehicle, frame: usize) -> Vec<Pose> {

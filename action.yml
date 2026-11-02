@@ -7,6 +7,9 @@ inputs:
   output-dir:
     description: Destination for village.gif, village.png, and preview.html.
     default: village
+  setting:
+    description: Environment to draw; earth, sky, mars, historic, futuristic, underwater, or underground.
+    default: earth
   token:
     description: GitHub token; private commits are always excluded.
     default: ${{ github.token }}
@@ -46,6 +49,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         PROFILE_LOGIN: ${{ inputs.login }}
         PROFILE_OUTPUT_DIR: ${{ inputs.output-dir }}
+        PROFILE_SETTING: ${{ inputs.setting }}
       run: |
         "$PROFILE_RENDERER" collect "$PROFILE_LOGIN" --output "$RUNNER_TEMP/profile-snapshot.json"
-        "$PROFILE_RENDERER" render "$RUNNER_TEMP/profile-snapshot.json" --output-dir "$PROFILE_OUTPUT_DIR"
+        "$PROFILE_RENDERER" render "$RUNNER_TEMP/profile-snapshot.json" --output-dir "$PROFILE_OUTPUT_DIR" --setting "$PROFILE_SETTING"

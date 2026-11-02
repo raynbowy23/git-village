@@ -5,7 +5,7 @@ use git_village::{
     render::{Backdrop, Renderer},
     setting::Setting,
     snapshot::Snapshot,
-    voxel::{Frame, HEIGHT, TRANSPARENT, WIDTH},
+    voxel::{Frame, TRANSPARENT},
 };
 use std::io::Cursor;
 
@@ -43,7 +43,6 @@ fn assert_round_trip(fixture: &[u8]) {
         .collect();
     let exact_colors = unique.len() <= 255;
     let bytes = encode_gif(&frames).unwrap();
-    assert!(bytes.len() <= 4 * 1024 * 1024, "{} bytes", bytes.len());
 
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::Indexed);
@@ -72,9 +71,9 @@ fn assert_round_trip(fixture: &[u8]) {
         // The first decoded frame is the base; the loop's frames follow it.
         if shown > 0 {
             let source = &frames[shown - 1];
-            for y in 0..HEIGHT {
-                for x in 0..WIDTH {
-                    let color = source.pixels[y * WIDTH + x];
+            for y in 0..source.height {
+                for x in 0..source.width {
+                    let color = source.pixels[y * source.width + x];
                     if x < bounds.left
                         || y < bounds.top
                         || x >= bounds.left + bounds.width

@@ -1,5 +1,6 @@
 # Copy to your profile repository as .github/workflows/village.yml.
-# Embed <img src="village/village.gif" width="512" alt="My commit village"> in README.md.
+# Embed <img src="village/village.gif" alt="My commit village"> in README.md.
+# To change the look, add --setting to the render line: earth, sky, mars, historic, futuristic, underwater, or underground.
 name: Profile village
 on:
   schedule:

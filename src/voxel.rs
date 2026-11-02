@@ -5,30 +5,47 @@ pub const WIDTH: usize = 384;
 pub const HEIGHT: usize = 256;
 /// Key color for pixels with no scene behind them. The encoders turn it into real transparency, so no scene may draw this exact color.
 pub const TRANSPARENT: [u8; 3] = [255, 0, 254];
-/// RGB frame and depth buffer; larger depth is nearer.
+/// RGB frame and depth buffer; larger depth is nearer. A frame covers a rectangle of projected screen coordinates, so a city larger than the base canvas keeps its projection and simply gets a bigger frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
     /// Opaque RGB pixels.
     pub pixels: Vec<[u8; 3]>,
     /// Occlusion depths.
     pub depth: Vec<i32>,
+    /// Projected screen column of the first pixel.
+    pub left: i32,
+    /// Projected screen row of the first pixel.
+    pub top: i32,
+    /// Columns in the buffer.
+    pub width: usize,
+    /// Rows in the buffer.
+    pub height: usize,
 }
 /// Isometric 2:1 world projection.
 pub fn project(x: i32, y: i32, z: i32) -> (i32, i32) {
     (192 + x - y, 78 + (x + y) / 2 - z)
 }
 impl Frame {
-    /// Fill a frame with one color.
+    /// Fill the base canvas with one color.
     pub fn new(color: [u8; 3]) -> Self {
+        Self::canvas(0, 0, WIDTH, HEIGHT, color)
+    }
+    /// Fill a frame covering the given projected rectangle with one color.
+    pub fn canvas(left: i32, top: i32, width: usize, height: usize, color: [u8; 3]) -> Self {
         Self {
-            pixels: vec![color; WIDTH * HEIGHT],
-            depth: vec![i32::MIN; WIDTH * HEIGHT],
+            pixels: vec![color; width * height],
+            depth: vec![i32::MIN; width * height],
+            left,
+            top,
+            width,
+            height,
         }
     }
     /// Depth-tested pixel.
     pub fn pixel(&mut self, x: i32, y: i32, depth: i32, color: [u8; 3]) {
-        if x >= 0 && y >= 0 && x < WIDTH as i32 && y < HEIGHT as i32 {
-            let index = y as usize * WIDTH + x as usize;
+        let (column, row) = (x - self.left, y - self.top);
+        if column >= 0 && row >= 0 && column < self.width as i32 && row < self.height as i32 {
+            let index = row as usize * self.width + column as usize;
             if depth >= self.depth[index] {
                 self.pixels[index] = color;
                 self.depth[index] = depth

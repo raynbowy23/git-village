@@ -28,7 +28,11 @@ fn sheet(frames: &[Frame]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                             + (index % columns * WIDTH + x) * 2
                             + dx)
                             * 3;
-                        let color = frame.pixels[y * WIDTH + x];
+                        // A city wider than the base canvas shows its center here.
+                        let shifted_x = x + frame.width.saturating_sub(WIDTH) / 2;
+                        let shifted_y = y + frame.height.saturating_sub(HEIGHT) / 2;
+                        let color = frame.pixels[shifted_y.min(frame.height - 1) * frame.width
+                            + shifted_x.min(frame.width - 1)];
                         pixels[offset..offset + 3].copy_from_slice(&if color
                             == git_village::voxel::TRANSPARENT
                         {
@@ -155,13 +159,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let plan = git_village::plan::CityPlan::new(&snapshot);
         println!(
-            "{stage}: buildings {} arms {:?} walks {:?}",
+            "{stage}: buildings {} blocks {}",
             plan.buildings.len(),
-            plan.arms
-                .iter()
-                .map(|a| (&a.language, a.land.len(), a.plots.len()))
-                .collect::<Vec<_>>(),
-            plan.walks.iter().map(|r| r.district).collect::<Vec<_>>()
+            plan.walks.len() - 1
         );
         let renderer = Renderer::new(&snapshot, Setting::Earth)?;
         let frames: Vec<_> = (0..FRAME_COUNT)
@@ -175,80 +175,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{destination}/{stage}.png"),
             encode_png_with_bounds(&still, export_bounds(&frames))?,
         )?;
-        text(&mut still, 4, 4, stage, [255, 245, 204]);
+        let (label_x, label_y) = (still.left + 4, still.top + 4);
+        text(&mut still, label_x, label_y, stage, [255, 245, 204]);
         stages.push(still);
     }
     std::fs::write(format!("{destination}/growth-sheet.png"), sheet(&stages)?)?;
-    let mut realistic = Vec::new();
-    for (stage, total) in STAGES {
-        let mut snapshot = synthetic(total);
-        for (language, weight) in snapshot.languages.iter_mut().zip([45, 25, 15, 10, 5]) {
-            language.commits = total / 100 * weight;
-            language.arm_earned_on = (language.commits >= 25)
-                .then(|| snapshot.created_on + Duration::days(2500 / weight as i64));
-        }
-        let renderer = Renderer::with_backdrop(&snapshot, Setting::Earth, Backdrop::None)?;
-        let mut frame = renderer.still();
-        text(&mut frame, 4, 4, stage, [70, 70, 70]);
-        realistic.push(frame);
-    }
-    std::fs::write(
-        format!("{destination}/language-growth-sheet.png"),
-        sheet(&realistic)?,
-    )?;
-    let mut arms = Vec::new();
-    for count in [1, 3, 5, 8] {
-        let mut snapshot = synthetic(100000);
-        let names = [
-            "Rust",
-            "Python",
-            "TypeScript",
-            "Go",
-            "Ruby",
-            "Shell",
-            "Haskell",
-            "Java",
-        ];
-        snapshot.languages = (0..count)
-            .map(|i| git_village::snapshot::Language {
-                name: names[i].into(),
-                color: None,
-                commits: 100000 / count as u64,
-                arm_earned_on: Some(snapshot.created_on + Duration::days(i as i64)),
-            })
-            .collect();
-        let renderer = Renderer::with_backdrop(&snapshot, Setting::Earth, Backdrop::None)?;
-        let mut frame = renderer.still();
-        text(&mut frame, 4, 4, &format!("{count} ARMS"), [255, 245, 204]);
-        arms.push(frame);
-    }
-    std::fs::write(format!("{destination}/arms-sheet.png"), sheet(&arms)?)?;
-    let mut maximum = synthetic(800000);
-    maximum.languages = (0..8)
-        .map(|i| git_village::snapshot::Language {
-            name: format!("Language{i}"),
-            color: None,
-            commits: 100000,
-            arm_earned_on: Some(maximum.created_on + Duration::days(i)),
-        })
-        .collect();
-    maximum.daily_commits.clear();
-    maximum.daily_commits.insert(maximum.observed_on, 799999);
-    maximum
+    // One still per setting, from an account at the City stage, in the backdrop that shows it best.
+    let mut account = synthetic(20000);
+    account.daily_commits.clear();
+    account.daily_commits.insert(account.observed_on, 3);
+    account
         .daily_commits
-        .insert(maximum.observed_on - Duration::days(1), 1);
-    for backdrop in [Backdrop::None, Backdrop::Scene] {
-        let renderer = Renderer::with_backdrop(&maximum, Setting::Earth, backdrop)?;
-        let frames: Vec<_> = (0..FRAME_COUNT).map(|f| renderer.frame(f)).collect();
-        let gif = encode_gif(&frames)?;
-        println!(
-            "Maximum eight-arm Festival {backdrop:?}: {} bytes, {}x{} pixels",
-            gif.len(),
-            export_bounds(&frames).width * 2,
-            export_bounds(&frames).height * 2
-        );
-        assert!(gif.len() <= 4 * 1024 * 1024);
-        std::fs::write(format!("{destination}/maximum-{backdrop:?}.gif"), gif)?;
+        .insert(account.observed_on - Duration::days(1), 3);
+    for setting in Setting::ALL {
+        let renderer = Renderer::new(&account, setting)?;
+        let frames: Vec<_> = (0..FRAME_COUNT)
+            .step_by(96)
+            .map(|i| renderer.frame(i))
+            .collect();
+        std::fs::write(
+            format!("{destination}/setting-{}.png", setting.name()),
+            encode_png_with_bounds(&frames[0], export_bounds(&frames))?,
+        )?;
     }
     let mut moods = Vec::new();
     for mood in [
@@ -261,8 +209,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let snapshot = mood_snapshot(mood);
         let renderer = Renderer::new(&snapshot, Setting::Earth)?;
         let mut still = renderer.still();
-        text(&mut still, 4, 4, &format!("{mood:?}"), [255, 245, 204]);
         std::fs::write(format!("{destination}/{mood:?}.png"), encode_png(&still)?)?;
+        let (label_x, label_y) = (still.left + 4, still.top + 4);
+        text(
+            &mut still,
+            label_x,
+            label_y,
+            &format!("{mood:?}"),
+            [255, 245, 204],
+        );
         moods.push(still);
     }
     std::fs::write(format!("{destination}/mood-sheet.png"), sheet(&moods)?)?;

@@ -5,13 +5,13 @@ use std::collections::BTreeMap;
 /// Inclusive growth thresholds.
 pub const STAGES: [(&str, u64); 6] = [
     ("Outpost", 0),
-    ("Hamlet", 25),
-    ("Village", 250),
-    ("Town", 1000),
-    ("City", 5000),
-    ("Metropolis", 20000),
+    ("Hamlet", 100),
+    ("Village", 1500),
+    ("Town", 5000),
+    ("City", 20000),
+    ("Metropolis", 100000),
 ];
-/// Bounded visual signals.
+/// Visual signals derived from commits.
 #[derive(Clone, Debug)]
 pub struct Development {
     /// Growth stage index.
@@ -40,32 +40,30 @@ pub fn weeks(snapshot: &Snapshot) -> BTreeMap<chrono::NaiveDate, u64> {
     }
     weeks
 }
-/// Derive all bounded traits without a clock.
+/// Derive all traits without a clock.
 pub fn derive(snapshot: &Snapshot) -> Development {
     let total = snapshot.total_commits;
-    // Log interpolation preserves diminishing growth within each visually distinct stage.
+    // Log interpolation preserves diminishing height growth within each stage, and past the last anchor the same slope continues.
     let anchors = [
-        (0, 1, 5),
-        (25, 3, 7),
-        (250, 9, 12),
-        (1000, 22, 22),
-        (5000, 55, 43),
-        (20000, 96, 74),
-        (100000, 96, 80),
+        (0, 5),
+        (100, 7),
+        (1500, 12),
+        (5000, 22),
+        (20000, 43),
+        (100000, 74),
+        (500000, 80),
     ];
-    let mut building_count = 96;
-    let mut max_height = 80;
-    for pair in anchors.windows(2) {
-        let (lower, count, height) = pair[0];
-        let (upper, next_count, next_height) = pair[1];
-        if total <= upper {
-            let fraction = (((total + 1) as f64).ln() - ((lower + 1) as f64).ln())
-                / (((upper + 1) as f64).ln() - ((lower + 1) as f64).ln());
-            building_count = count + ((next_count - count) as f64 * fraction) as usize;
-            max_height = height + ((next_height - height) as f64 * fraction) as i32;
-            break;
-        }
-    }
+    let log = |commits: u64| ((commits as f64) + 1.0).ln();
+    let (lower, height, upper, next_height) = anchors
+        .windows(2)
+        .find(|pair| total <= pair[1].0)
+        .map_or((100000, 74, 500000, 80), |pair| {
+            (pair[0].0, pair[0].1, pair[1].0, pair[1].1)
+        });
+    let fraction = (log(total) - log(lower)) / (log(upper) - log(lower));
+    let max_height = height + (f64::from(next_height - height) * fraction) as i32;
+    // Deliberately slow: 1,000 commits is still a handful of buildings.
+    let building_count = ((total as f64 / 60.0).powf(0.7).round() as usize).max(1);
     let weeks = weeks(snapshot);
     let mut longest = 0;
     let mut run = 0;

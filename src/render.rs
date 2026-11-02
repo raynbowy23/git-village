@@ -7,7 +7,7 @@ use crate::{
         FRAME_COUNT, Mode, Surface, TICK_FRAMES, Vehicle, person_pose, traffic, vehicle_body, wave,
     },
     plan::CityPlan,
-    setting::Setting,
+    setting::{Celestial, Flora, Setting},
     snapshot::Snapshot,
     voxel::{Frame, HEIGHT, TRANSPARENT, WIDTH, project, shade},
 };
@@ -87,8 +87,14 @@ pub struct Renderer {
     static_frame: Frame,
     buildings: Vec<Building>,
     plan: CityPlan,
+    detail: f64,
 }
 impl Renderer {
+    /// Keep this share of walkers, vehicles and animated buildings, so a loop can be made to fit the GIF budget. The city itself does not change.
+    pub fn with_detail(mut self, detail: f64) -> Self {
+        self.detail = detail;
+        self
+    }
     /// Render with the full scene around the island.
     pub fn new(snapshot: &Snapshot, setting: Setting) -> Result<Self, String> {
         Self::with_backdrop(snapshot, setting, Backdrop::Scene)
@@ -105,49 +111,61 @@ impl Renderer {
         let development = derive(snapshot);
         let colors = setting.colors();
         let plan = CityPlan::new(snapshot);
-        let sky: [u8; 3] = match mood {
-            Mood::Night => [29, 42, 71],
-            Mood::Abandoned => [154, 169, 173],
-            _ => [139, 190, 204],
+        let materials = setting.materials();
+        let tone = match mood {
+            Mood::Night => 1,
+            Mood::Abandoned => 2,
+            _ => 0,
         };
-        let water: [u8; 3] = match mood {
-            Mood::Night => [26, 62, 83],
-            Mood::Abandoned => [109, 133, 135],
-            _ => [54, 121, 145],
-        };
-        let mut frame = Frame::new(if scene { sky } else { TRANSPARENT });
-        for y in (0..HEIGHT as i32).filter(|_| scene) {
+        let sky = materials.sky[tone];
+        let water = materials.water[tone];
+        let mut frame = city_canvas(&plan, scene, if scene { sky } else { TRANSPARENT });
+        let (left, top) = (frame.left, frame.top);
+        let (canvas_width, canvas_height) = (frame.width as i32, frame.height as i32);
+        for row in (0..canvas_height).filter(|_| scene) {
+            let y = row;
             let blend = ((y - 68).clamp(0, 28) * 100 / 28) as u16;
             let color = std::array::from_fn(|channel| {
                 ((u16::from(sky[channel]) * (100 - blend) + u16::from(water[channel]) * blend)
                     / 100) as u8
             });
             frame.rect(
-                0,
-                y,
-                WIDTH as i32,
+                left,
+                top + y,
+                canvas_width,
                 1,
                 -10000,
-                shade(color, 100 - ((y - 100).max(0) / 10) as u16),
+                shade(color, 100 - ((y - 100).max(0) / 10).min(50) as u16),
             );
         }
-        for index in (0..14).filter(|_| scene) {
-            let x = index * 30 - 10;
+        for index in (0..canvas_width / 30 + 2).filter(|_| scene) {
+            let x = left + index * 30 - 10;
             let radius = 14 + (stable_hash(&format!("{}:{index}", snapshot.account_id)) % 8) as i32;
             disc(
                 &mut frame,
                 x,
-                91,
+                top + 91,
                 radius,
                 -9500,
                 atmosphere(colors[1], mood),
             );
         }
-        if scene && mood == Mood::Night {
-            disc(&mut frame, 340, 22, 7, -8500, [226, 230, 209]);
-            disc(&mut frame, 343, 19, 6, -8400, sky);
+        if scene && materials.celestial == Celestial::TwinMoons && mood != Mood::Abandoned {
+            let moon = left + canvas_width - 60;
+            disc(&mut frame, moon, top + 18, 4, -8500, [236, 214, 186]);
+            disc(&mut frame, moon + 30, top + 34, 2, -8500, [214, 196, 176]);
+        } else if materials.celestial != Celestial::Sun {
+            // Nothing else overhead in this setting.
+        } else if scene && mood == Mood::Night {
+            let moon = left + canvas_width - 44;
+            disc(&mut frame, moon, top + 22, 7, -8500, [226, 230, 209]);
+            disc(&mut frame, moon + 3, top + 19, 6, -8400, sky);
         } else if scene && mood != Mood::Abandoned {
-            disc(&mut frame, 340, 22, 8, -8500, [248, 225, 161]);
+            let sun = left + canvas_width - 44;
+            disc(&mut frame, sun, top + 22, 8, -8500, [248, 225, 161]);
+        }
+        if scene {
+            backdrop_details(&mut frame, setting, mood, snapshot.account_id);
         }
         draw_ground(&mut frame, &plan, setting, mood, development.stage);
         if development.stage >= 3 {
@@ -190,12 +208,15 @@ impl Renderer {
             );
         }
         let mut building_list = plan.buildings.clone();
+        for building in &mut building_list {
+            building.color = setting.tinted(building.color);
+        }
         // Ground shadows are drawn before any walls, with one-pixel dark gaps between lots.
         for building in &building_list {
             for y in building.y..building.y + building.length + 3 {
                 for x in building.x + 2..building.x + building.width + 4 {
                     let (sx, sy) = project(x, y, 0);
-                    frame.pixel(sx, sy, (x + y) * 8 + 1, atmosphere([65, 99, 80], mood));
+                    frame.pixel(sx, sy, (x + y) * 8 + 1, atmosphere(materials.shadow, mood));
                 }
             }
         }
@@ -298,6 +319,14 @@ impl Renderer {
                 if lit { WARM_LIGHT } else { [102, 115, 113] },
             );
         }
+        // Grove trees hold still, because animating them would grow the GIF.
+        for &(x, y) in &plan.trees {
+            if materials.flora == Flora::Trees && (x / 4 + y / 4).rem_euclid(3) == 0 {
+                pine(&mut frame, x, y, setting, mood);
+            } else {
+                prop(&mut frame, x, y, setting, 0, mood);
+            }
+        }
         for index in 0..28 {
             let x = (index * 37 + snapshot.account_id as i32 % 13).rem_euclid(110);
             let y = (index * 53 + 17).rem_euclid(110);
@@ -311,10 +340,8 @@ impl Renderer {
             }
         }
         if mood == Mood::Abandoned {
-            for index in 0..100 {
-                let x = (index * 37 + 11) % 111;
-                let y = (index * 47 + 19) % 111;
-                if !plan.land.contains(&(x, y)) {
+            for &(x, y) in &plan.land {
+                if (x * 37 + y * 47).rem_euclid(97) != 0 {
                     continue;
                 }
                 let (sx, sy) = project(x, y, 0);
@@ -322,19 +349,26 @@ impl Renderer {
                 frame.line((sx, sy), (sx + 1, sy - 2), depth, [112, 132, 104]);
             }
         }
+        let strip = top + canvas_height - 22;
         if scene {
-            frame.rect(0, 234, WIDTH as i32, 22, 100000, [23, 30, 42]);
+            frame.rect(left, strip, canvas_width, 22, 100000, [23, 30, 42]);
         }
         for (index, line) in status_lines(snapshot).iter().enumerate().filter(|_| scene) {
-            text(&mut frame, 4, 236 + index as i32 * 7, line, [224, 224, 203]);
+            text(
+                &mut frame,
+                left + 4,
+                strip + 2 + index as i32 * 7,
+                line,
+                [224, 224, 203],
+            );
         }
         if scene && status_lines(snapshot)[2].is_empty() {
             let mut languages: Vec<_> = snapshot.languages.iter().collect();
             languages.sort_by_key(|language| (std::cmp::Reverse(language.commits), &language.name));
             for (index, language) in languages.into_iter().take(5).enumerate() {
                 frame.rect(
-                    4 + index as i32 * 6,
-                    251,
+                    left + 4 + index as i32 * 6,
+                    strip + 17,
                     4,
                     3,
                     100003,
@@ -350,6 +384,7 @@ impl Renderer {
             static_frame: frame,
             buildings: building_list,
             plan,
+            detail: 1.0,
         })
     }
     /// First loop frame.
@@ -379,21 +414,22 @@ impl Renderer {
             (index + (self.snapshot.account_id % FRAME_COUNT as u64) as usize) % FRAME_COUNT;
         let mut frame = self.static_frame.clone();
         let development = derive(&self.snapshot);
-        let population = (development.population.saturating_add(1).ilog2() as usize * 3).min(46);
+        // Walkers follow yearly commits and the size of the city, with no ceiling.
+        let population = development.population.saturating_add(1).ilog2() as usize * 3
+            + crate::motion::crowd(self.buildings.len());
+        let thin = |count: usize| (count as f64 * self.detail).ceil() as usize;
+        let gathered = thin(match self.mood {
+            Mood::Festival => 14,
+            Mood::MarketDay => 8,
+            _ => 0,
+        });
         let population = match self.mood {
-            Mood::Abandoned => 1,
-            Mood::Night => 3,
-            Mood::Festival => population + 14,
-            Mood::MarketDay => population + 8,
-            _ => population,
+            Mood::Abandoned => thin(1),
+            Mood::Night => thin(3),
+            _ => thin(population) + gathered,
         };
         for person in 0..population {
-            let district_person = if person
-                >= population.saturating_sub(match self.mood {
-                    Mood::Festival => 14,
-                    Mood::MarketDay => 8,
-                    _ => 0,
-                }) {
+            let district_person = if person >= population.saturating_sub(gathered) {
                 person * self.plan.walks.len()
             } else {
                 person
@@ -415,24 +451,37 @@ impl Renderer {
                 [73 + (person % 4) as u8 * 39, 92, 132],
             );
         }
-        for vehicle in self.vehicles() {
+        let mut vehicles = self.vehicles();
+        vehicles.truncate(thin(vehicles.len()));
+        for vehicle in vehicles {
             let mode = vehicle.mode;
             draw_vehicle(
                 &mut frame,
                 &vehicle_body(&self.plan, vehicle, route_frame),
                 mode,
                 self.setting.materials().vehicles[mode as usize],
+                self.setting.materials().lift,
             );
         }
+        // Past this many, only an even sample of buildings animates, because each one adds to every frame of the GIF.
+        let stride =
+            (((self.buildings.len() / 160 + 1) as f64 / self.detail).ceil() as usize).max(1);
         for (building_index, building) in self.buildings.iter().enumerate() {
-            if development.stage == 0 || self.mood == Mood::Abandoned {
+            if development.stage == 0
+                || self.mood == Mood::Abandoned
+                || (building_index % stride != 0 && building_index >= self.crane_count())
+            {
                 continue;
             }
             let (sx, sy) = project(building.x + 1, building.y + 1, building.height + 6);
             let depth = (building.x + building.y + 8) * 8 + building.height + 8;
             match building.archetype {
                 Archetype::Foundry => {
-                    for puff in 0..if self.buildings.len() > 80 { 1 } else { 3 } {
+                    for puff in 0..if self.buildings.len() > 80 || self.detail < 1.0 {
+                        1
+                    } else {
+                        3
+                    } {
                         let phase = (index / TICK_FRAMES + puff * 32 + building_index * 7) % 96;
                         let rise = phase as i32 / 10;
                         frame.rect(
@@ -518,9 +567,12 @@ impl Renderer {
                     let bounds = self.city_bounds();
                     let x =
                         bounds.0 + 22 + (bounds.2 - bounds.0 - 44).max(0) * (burst as i32 + 1) / 4;
-                    (x, (bounds.1 - 3).max(24))
+                    (x, (bounds.1 - 3).max(frame.top + 24))
                 } else {
-                    (40 + burst as i32 * 80, 24 + (burst as i32 % 2) * 10)
+                    (
+                        frame.left + 40 + burst as i32 * 80,
+                        frame.top + 24 + (burst as i32 % 2) * 10,
+                    )
                 };
                 let color = if phase < 64 {
                     *burst_color
@@ -559,11 +611,153 @@ impl Renderer {
         }
         frame
     }
+    /// A few small moving things that belong to the setting, placed among its open ground.
+    fn ambient(&self, frame: &mut Frame, index: usize) {
+        if self.setting == Setting::Earth {
+            return;
+        }
+        let trees = &self.plan.trees;
+        let wanted = ((5.0 * self.detail).ceil() as usize).min(trees.len());
+        let spots: Vec<_> = trees
+            .iter()
+            .step_by((trees.len() / wanted.max(1)).max(1))
+            .take(wanted)
+            .copied()
+            .collect();
+        let tick = index / TICK_FRAMES;
+        for (item, &(x, y)) in spots.iter().enumerate() {
+            let (sx, sy) = project(x, y, 0);
+            let depth = (x + y) * 8 + 10;
+            let phase = (tick + item * 19) % 96;
+            let mood = self.mood;
+            match self.setting {
+                Setting::Mars => {
+                    // A dust devil twists as it climbs.
+                    for level in 0..6 {
+                        let drift = wave(index, item * 11 + level as usize * 7, 2);
+                        frame.rect(
+                            sx + drift - level / 2,
+                            sy - level * 2,
+                            2 + level,
+                            2,
+                            depth,
+                            atmosphere([222, 170, 120], mood),
+                        );
+                    }
+                }
+                Setting::Sky => {
+                    // A thin stream spills over the edge beneath this spot's side of the island.
+                    let reach = self
+                        .plan
+                        .land
+                        .iter()
+                        .filter(|&&(lx, ly)| lx - ly == x - y)
+                        .map(|&(lx, ly)| lx + ly)
+                        .max()
+                        .unwrap_or(x + y);
+                    let (fx, fy) = project((reach + x - y) / 2, (reach - x + y) / 2, 0);
+                    for drop in 0..4 {
+                        let fall = ((phase + drop * 24) % 96) as i32 / 6;
+                        frame.rect(
+                            fx,
+                            fy + 10 + fall,
+                            1,
+                            2,
+                            reach * 8 + 40,
+                            atmosphere([236, 246, 250], mood),
+                        );
+                    }
+                }
+                Setting::Historic => {
+                    // A flag on a pole, and a sheep grazing below it.
+                    frame.line((sx + 4, sy), (sx + 4, sy - 12), depth, [92, 70, 48]);
+                    frame.line(
+                        (sx + 5, sy - 12),
+                        (sx + 9, sy - 12 + wave(index, item * 13, 1)),
+                        depth,
+                        atmosphere([190, 70, 58], mood),
+                    );
+                    let grazing = wave(index, item * 29, 1);
+                    frame.rect(
+                        sx - 6 + grazing,
+                        sy - 2,
+                        4,
+                        2,
+                        depth,
+                        atmosphere([232, 228, 214], mood),
+                    );
+                    frame.pixel(
+                        sx - 7 + grazing,
+                        sy - 2,
+                        depth,
+                        atmosphere([62, 54, 50], mood),
+                    );
+                }
+                Setting::Futuristic => {
+                    // A hologram flickers above the pylon, and a light drifts past it.
+                    if phase < 64 {
+                        frame.rect(
+                            sx - 2,
+                            sy - 20,
+                            5,
+                            3,
+                            depth,
+                            atmosphere([240, 110, 210], mood),
+                        );
+                    }
+                    frame.pixel(
+                        sx + wave(index, item * 17, 12),
+                        sy - 24 + wave(index, item * 7, 3),
+                        depth,
+                        atmosphere([150, 240, 250], mood),
+                    );
+                }
+                Setting::Underwater => {
+                    // Bubbles rise from the kelp, and a small school crosses it.
+                    for bubble in 0..3 {
+                        let rise = ((phase + bubble * 32) % 96) as i32 / 3;
+                        frame.pixel(
+                            sx + 1,
+                            sy - 12 - rise,
+                            depth,
+                            atmosphere([190, 232, 240], mood),
+                        );
+                    }
+                    for fish in 0..4 {
+                        frame.rect(
+                            sx + wave(index, item * 23, 14) + fish * 4,
+                            sy - 18 + (fish * 5) % 4,
+                            2,
+                            1,
+                            depth,
+                            atmosphere(self.setting.materials().flier, mood),
+                        );
+                    }
+                }
+                Setting::Underground => {
+                    // A crystal glints, and a drop falls toward it.
+                    if phase < 24 {
+                        frame.pixel(sx + 1, sy - 8, depth + 1, [226, 214, 255]);
+                    }
+                    let fall = phase as i32 / 3;
+                    frame.pixel(
+                        sx + 3,
+                        sy - 34 + fall,
+                        depth,
+                        atmosphere([150, 190, 220], mood),
+                    );
+                }
+                Setting::Earth => {}
+            }
+        }
+    }
     fn city_bounds(&self) -> (i32, i32, i32, i32) {
-        let mut bounds = (WIDTH as i32, HEIGHT as i32, 0, 0);
-        for (i, color) in self.static_frame.pixels.iter().enumerate() {
+        let canvas = &self.static_frame;
+        let mut bounds = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for (i, color) in canvas.pixels.iter().enumerate() {
             if *color != TRANSPARENT {
-                let (x, y) = ((i % WIDTH) as i32, (i / WIDTH) as i32);
+                let x = canvas.left + (i % canvas.width) as i32;
+                let y = canvas.top + (i / canvas.width) as i32;
                 bounds.0 = bounds.0.min(x);
                 bounds.1 = bounds.1.min(y);
                 bounds.2 = bounds.2.max(x);
@@ -574,42 +768,72 @@ impl Renderer {
     }
     fn nature(&self, frame: &mut Frame, index: usize) {
         let scene = self.backdrop == Backdrop::Scene;
-        for cloud in (0..8).filter(|_| scene) {
-            let x = cloud * 55 - 12 + wave(index, cloud as usize * 13, 8);
-            let y = 15 + (cloud % 3) * 12;
-            let color = match self.mood {
-                Mood::Night => [62, 80, 105],
-                Mood::Abandoned => [181, 190, 190],
-                _ => [223, 235, 226],
-            };
-            disc(frame, x, y, 5, -6000, color);
-            frame.rect(x - 8, y, 24, 4, -6000, color);
-        }
-        if scene && self.mood == Mood::Night {
-            for star in 0..23 {
-                let x = 9 + (star * 37) % 368;
-                let y = 5 + (star * 19) % 58;
-                let color = if (index / TICK_FRAMES + star as usize * 7) % 48 < 24 {
-                    [226, 230, 209]
+        let (left, top) = (frame.left, frame.top);
+        let canvas_width = frame.width as i32;
+        // The base scene repeats across a canvas wider or taller than it.
+        let across: Vec<i32> = (0..(canvas_width + 383) / 384)
+            .filter(|_| scene)
+            .map(|tile| left + tile * 384)
+            .collect();
+        let down: Vec<i32> = (0..(frame.height as i32 - 124 + 103).max(0) / 104)
+            .map(|tile| top + tile * 104)
+            .collect();
+        for &offset in &across {
+            for cloud in 0..8 {
+                let x = offset + cloud * 55 - 12 + wave(index, cloud as usize * 13, 8);
+                let y = top + 15 + (cloud % 3) * 12;
+                let color = if self.setting != Setting::Earth {
+                    atmosphere(self.setting.materials().cloud, self.mood)
                 } else {
-                    [112, 143, 166]
+                    match self.mood {
+                        Mood::Night => [62, 80, 105],
+                        Mood::Abandoned => [181, 190, 190],
+                        _ => [223, 235, 226],
+                    }
                 };
-                frame.pixel(x, y, -5500, color);
+                disc(frame, x, y, 5, -6000, color);
+                frame.rect(x - 8, y, 24, 4, -6000, color);
+            }
+            if self.mood == Mood::Night {
+                for star in 0..23 {
+                    let x = offset + 9 + (star * 37) % 368;
+                    let y = top + 5 + (star * 19) % 58;
+                    let color = if (index / TICK_FRAMES + star as usize * 7) % 48 < 24 {
+                        [226, 230, 209]
+                    } else {
+                        [112, 143, 166]
+                    };
+                    frame.pixel(x, y, -5500, color);
+                }
+            }
+            for &row in &down {
+                for glint in 0..32 {
+                    let x = offset + 4 + (glint * 37) % 376 + wave(index, glint as usize * 7, 2);
+                    let y = row + 124 + (glint * 13) % 104;
+                    let color = if (index / TICK_FRAMES + glint as usize * 3) % 48 < 24 {
+                        [126, 180, 185]
+                    } else {
+                        [80, 145, 159]
+                    };
+                    frame.rect(x, y, 3, 1, -7000, atmosphere(color, self.mood));
+                }
+            }
+            for bird in 0..5 {
+                let x = offset + 26 + bird * 75 + wave(index, bird as usize * 9, 8);
+                let y = top + 54 + wave(index, bird as usize * 11, 2);
+                frame.line((x - 2, y), (x, y + 1), 4000, self.setting.materials().flier);
+                frame.line(
+                    (x, y + 1),
+                    (x + 2, y + wave(index, 0, 1)),
+                    4000,
+                    self.setting.materials().flier,
+                );
             }
         }
-        for glint in (0..32).filter(|_| scene) {
-            let x = 4 + (glint * 37) % 376 + wave(index, glint as usize * 7, 2);
-            let y = 124 + (glint * 13) % 104;
-            let color = if (index / TICK_FRAMES + glint as usize * 3) % 48 < 24 {
-                [126, 180, 185]
-            } else {
-                [80, 145, 159]
-            };
-            frame.rect(x, y, 3, 1, -7000, atmosphere(color, self.mood));
-        }
-        for boat in (0..2).filter(|_| scene) {
-            let x = 22 + boat * 337 + wave(index, boat as usize * 32, 3);
-            let y = 140 + boat * 8 + wave(index, boat as usize * 24, 1);
+        for boat in (0..2).filter(|_| scene && self.setting.materials().boats) {
+            let anchor = if boat == 0 { 22 } else { canvas_width - 25 };
+            let x = left + anchor + wave(index, boat as usize * 32, 3);
+            let y = top + 140 + boat * 8 + wave(index, boat as usize * 24, 1);
             frame.line((x - 5, y), (x + 4, y), -5000, [119, 81, 57]);
             frame.line((x - 3, y + 1), (x + 2, y + 1), -5000, [100, 73, 57]);
             frame.line((x, y), (x, y - 12), -5000, [185, 181, 153]);
@@ -624,17 +848,7 @@ impl Renderer {
                 );
             }
         }
-        for bird in (0..5).filter(|_| scene) {
-            let x = 26 + bird * 75 + wave(index, bird as usize * 9, 8);
-            let y = 54 + wave(index, bird as usize * 11, 2);
-            frame.line((x - 2, y), (x, y + 1), 4000, [53, 74, 90]);
-            frame.line(
-                (x, y + 1),
-                (x + 2, y + wave(index, 0, 1)),
-                4000,
-                [53, 74, 90],
-            );
-        }
+        self.ambient(frame, index);
         for tree in 0..12 {
             let x = (tree * 37 + 7) % 110;
             let y = (tree * 53 + 19) % 110;
@@ -657,6 +871,118 @@ impl Renderer {
         }
     }
 }
+/// Fixed parts of each setting's backdrop, drawn behind the island.
+fn backdrop_details(frame: &mut Frame, setting: Setting, mood: Mood, seed: u64) {
+    let (left, top) = (frame.left, frame.top);
+    let (width, height) = (frame.width as i32, frame.height as i32);
+    match setting {
+        Setting::Underwater => {
+            // Slanted shafts of light from the surface.
+            for shaft in (0..width / 70 + 1).map(|i| left + i * 70 + (seed % 23) as i32) {
+                for row in 0..height.min(135) {
+                    frame.rect(
+                        shaft + row / 3,
+                        top + row,
+                        9 - row / 15,
+                        1,
+                        -9000,
+                        atmosphere([58, 138, 176], mood),
+                    );
+                }
+            }
+        }
+        Setting::Underground => {
+            // Stalactites hang from a dark ceiling.
+            for tip in 0..width / 16 + 1 {
+                let x = left + tip * 16 + 3;
+                let reach = 10 + (stable_hash(&format!("{seed}:{tip}")) % 28) as i32;
+                for row in 0..reach {
+                    let half = (reach - row) / 5;
+                    frame.rect(
+                        x - half,
+                        top + row,
+                        half * 2 + 1,
+                        1,
+                        -8000,
+                        atmosphere([62, 58, 60], mood),
+                    );
+                }
+            }
+        }
+        Setting::Futuristic => {
+            // A skyline of lit towers along the horizon.
+            for tower in 0..width / 14 + 1 {
+                let rise = 12 + (stable_hash(&format!("{seed}:{tower}")) % 34) as i32;
+                let x = left + tower * 14;
+                frame.rect(
+                    x,
+                    top + 92 - rise,
+                    11,
+                    rise,
+                    -8000,
+                    atmosphere([30, 22, 64], mood),
+                );
+                frame.rect(
+                    x + 2,
+                    top + 92 - rise + 3,
+                    2,
+                    1,
+                    -7900,
+                    atmosphere([240, 110, 210], mood),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+/// A canvas holding the whole city with room for roofs and fireworks above it, never smaller than the base canvas.
+fn city_canvas(plan: &CityPlan, scene: bool, fill: [u8; 3]) -> Frame {
+    let (mut low_x, mut low_y, mut high_x, mut high_y) = (0, 0, WIDTH as i32, HEIGHT as i32);
+    let strip = if scene { 22 } else { 0 };
+    for &(x, y) in &plan.land {
+        let (sx, sy) = project(x, y, 0);
+        low_x = low_x.min(sx - 8);
+        high_x = high_x.max(sx + 8);
+        low_y = low_y.min(sy - 8);
+        high_y = high_y.max(sy + 18 + strip);
+    }
+    for building in &plan.buildings {
+        let (_, sy) = project(building.x, building.y, building.height + 18);
+        low_y = low_y.min(sy - 34);
+    }
+    Frame::canvas(
+        low_x,
+        low_y,
+        (high_x - low_x) as usize,
+        (high_y - low_y) as usize,
+        fill,
+    )
+}
+fn pine(frame: &mut Frame, x: i32, y: i32, setting: Setting, mood: Mood) {
+    let (sx, sy) = project(x, y, 0);
+    let depth = (x + y) * 8 + 8;
+    let foliage = setting.materials().foliage;
+    frame.rect(
+        sx,
+        sy - 2,
+        1,
+        3,
+        depth,
+        atmosphere(setting.materials().trunk, mood),
+    );
+    for row in 0..8 {
+        let half = (row + 1) / 2;
+        let tone = if row % 3 == 2 { 88 } else { 74 };
+        frame.rect(
+            sx - half,
+            sy - 10 + row,
+            half * 2 + 1,
+            1,
+            depth,
+            atmosphere(shade(foliage, tone), mood),
+        );
+    }
+}
 fn disc(frame: &mut Frame, x: i32, y: i32, radius: i32, depth: i32, color: [u8; 3]) {
     for dy in -radius..=radius {
         for dx in -radius..=radius {
@@ -669,6 +995,54 @@ fn disc(frame: &mut Frame, x: i32, y: i32, radius: i32, depth: i32, color: [u8; 
 fn prop(frame: &mut Frame, x: i32, y: i32, setting: Setting, sway: i32, mood: Mood) {
     let (sx, sy) = project(x, y, 0);
     let depth = (x + y) * 8 + 8;
+    let foliage = setting.materials().foliage;
+    match setting.materials().flora {
+        Flora::Trees => {}
+        Flora::Rocks => {
+            disc(frame, sx, sy - 2, 3, depth, atmosphere(foliage, mood));
+            disc(
+                frame,
+                sx - 1,
+                sy - 3,
+                1,
+                depth + 1,
+                atmosphere(shade(foliage, 130), mood),
+            );
+            return;
+        }
+        Flora::Pylons => {
+            frame.rect(
+                sx,
+                sy - 10,
+                1,
+                11,
+                depth,
+                atmosphere(setting.materials().trunk, mood),
+            );
+            frame.rect(sx - 1, sy - 12, 3, 2, depth + 1, atmosphere(foliage, mood));
+            return;
+        }
+        Flora::Kelp => {
+            for row in 0..11 {
+                let bend = if (row + x) % 4 < 2 { 0 } else { 1 };
+                frame.rect(sx + bend, sy - row, 2, 1, depth, atmosphere(foliage, mood));
+            }
+            return;
+        }
+        Flora::Crystals => {
+            for (dx, height, tone) in [(-2, 4, 80), (0, 8, 100), (2, 5, 125)] {
+                frame.rect(
+                    sx + dx,
+                    sy - height,
+                    2,
+                    height + 1,
+                    depth,
+                    atmosphere(shade(foliage, tone), mood),
+                );
+            }
+            return;
+        }
+    }
     frame.rect(
         sx,
         sy - 5,
@@ -916,11 +1290,17 @@ pub fn text(frame: &mut Frame, x: i32, y: i32, value: &str, color: [u8; 3]) {
         }
     }
 }
-fn draw_vehicle(frame: &mut Frame, sections: &[crate::motion::Pose], mode: Mode, color: [u8; 3]) {
+fn draw_vehicle(
+    frame: &mut Frame,
+    sections: &[crate::motion::Pose],
+    mode: Mode,
+    color: [u8; 3],
+    lift: i32,
+) {
     let height = if mode == Mode::Bicycle { 2 } else { 3 };
     let length = sections.len();
     for (section, body) in sections.iter().enumerate() {
-        let (vx, vy, z) = (body.x, body.y, body.z);
+        let (vx, vy, z) = (body.x, body.y, body.z + lift);
         if section % 5 == 4 && matches!(mode, Mode::Tram | Mode::Train) {
             continue;
         }
@@ -953,19 +1333,14 @@ pub fn bare_ground(plan: &CityPlan, setting: Setting) -> Frame {
 }
 fn draw_ground(frame: &mut Frame, plan: &CityPlan, setting: Setting, mood: Mood, stage: usize) {
     let colors = setting.colors();
+    let materials = setting.materials();
+    let [upper, lower] = materials.soil;
     // Every exposed front edge gets its own depth-tested earth face, including concave coasts.
     for &(x, y) in &plan.land {
         // Solid tile columns also cover interior samples that can be visible through a concave projected coast.
         for below in 0..=9 {
             let (sx, sy) = project(x, y, -below);
-            let soil = atmosphere(
-                if below < 5 {
-                    [150, 116, 80]
-                } else {
-                    [116, 90, 66]
-                },
-                mood,
-            );
+            let soil = atmosphere(if below < 5 { upper } else { lower }, mood);
             frame.pixel(sx, sy, (x + y) * 8 - below, soil);
             frame.pixel(sx, sy + 1, (x + y) * 8 - below, soil);
         }
@@ -975,11 +1350,7 @@ fn draw_ground(frame: &mut Frame, plan: &CityPlan, setting: Setting, mood: Mood,
             if !plan.land.contains(&(x + dx, y + dy)) {
                 // Rasterize the entire tile edge, including its shared corner. A single sample per tile leaves alternating empty screen columns.
                 for below in 0..=9 {
-                    let soil = if below < 5 {
-                        [150, 116, 80]
-                    } else {
-                        [116, 90, 66]
-                    };
+                    let soil = if below < 5 { upper } else { lower };
                     for along in 0..=1 {
                         let (wx, wy) = (x + dx + dy * along, y + dy + dx * along);
                         let (sx, sy) = project(wx, wy, -below);
@@ -1005,7 +1376,12 @@ fn draw_ground(frame: &mut Frame, plan: &CityPlan, setting: Setting, mood: Mood,
             .iter()
             .any(|&(dx, dy)| !plan.land.contains(&(x + dx, y + dy)));
         let color = if coast {
-            [213, 198, 150]
+            materials.rim
+        } else if setting == Setting::Futuristic
+            && plan.surface(x, y) == Surface::Grass
+            && (x.rem_euclid(8) == 0 || y.rem_euclid(8) == 0)
+        {
+            [46, 92, 128]
         } else {
             match plan.surface(x, y) {
                 Surface::Road => {

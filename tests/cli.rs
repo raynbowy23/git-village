@@ -14,7 +14,7 @@ fn help_version_and_usage_exit_codes() {
             .contains("--output-dir")
     );
     assert!(
-        !String::from_utf8(run(&["--help"]).stdout)
+        String::from_utf8(run(&["--help"]).stdout)
             .unwrap()
             .contains("--setting")
     );
@@ -23,10 +23,17 @@ fn help_version_and_usage_exit_codes() {
         vec![],
         vec!["render"],
         vec!["collect", "--bad"],
-        vec!["render", "x", "--output-dir", "x", "--setting", "earth"],
+        vec!["render", "x", "--output-dir", "x", "--setting"],
     ] {
         assert_eq!(run(&arguments).status.code(), Some(2));
     }
+    let unknown = run(&["render", "x", "--output-dir", "x", "--setting", "venus"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(
+        String::from_utf8(unknown.stderr)
+            .unwrap()
+            .contains("unknown setting venus")
+    );
     let result = run(&["collect", "owner/repo"]);
     assert_eq!(result.status.code(), Some(1));
     assert!(

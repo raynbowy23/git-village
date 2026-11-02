@@ -1,7 +1,6 @@
 use git_village::DISPLAY_NAME;
 use git_village::{
     collect::{GhCli, collect_account_snapshot},
-    motion::FRAME_COUNT,
     output,
     render::{Backdrop, Renderer},
     setting::Setting,
@@ -10,7 +9,7 @@ use git_village::{
 use std::{collections::BTreeMap, path::Path};
 fn usage() -> ! {
     eprintln!(
-        "Usage: {DISPLAY_NAME} collect LOGIN [--output FILE]\n       {DISPLAY_NAME} render SNAPSHOT --output-dir DIR [--background none|scene]"
+        "Usage: {DISPLAY_NAME} collect LOGIN [--output FILE]\n       {DISPLAY_NAME} render SNAPSHOT --output-dir DIR [--background none|scene] [--setting NAME]"
     );
     std::process::exit(2)
 }
@@ -28,7 +27,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match arguments.as_slice() {
         [flag] if flag == "--help" => {
             println!(
-                "{DISPLAY_NAME} collect LOGIN [--output FILE]\n{DISPLAY_NAME} render SNAPSHOT --output-dir DIR [--background scene|none]"
+                "{DISPLAY_NAME} collect LOGIN [--output FILE]\n{DISPLAY_NAME} render SNAPSHOT --output-dir DIR [--background scene|none] [--setting NAME]\nSettings: earth, sky, mars, historic, futuristic, underwater, underground"
             );
         }
         [flag] if flag == "--version" => {
@@ -66,12 +65,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         [command, input, rest @ ..] if command == "render" && !input.starts_with('-') => {
             let mut destination = None;
             let mut backdrop = Backdrop::None;
+            let mut setting = Setting::Earth;
             let mut chunks = rest.chunks_exact(2);
             for pair in &mut chunks {
                 match pair[0].as_str() {
                     "--output-dir" if destination.is_none() => destination = Some(&pair[1]),
                     "--background" if pair[1] == "scene" => backdrop = Backdrop::Scene,
                     "--background" if pair[1] == "none" => backdrop = Backdrop::None,
+                    "--setting" => {
+                        setting = Setting::parse(&pair[1]).ok_or_else(|| {
+                            let names: Vec<_> = Setting::ALL.iter().map(|s| s.name()).collect();
+                            format!("unknown setting {}; choose {}", pair[1], names.join(", "))
+                        })?;
+                    }
                     _ => usage(),
                 }
             }
@@ -80,9 +86,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             let directory = destination.unwrap_or_else(|| usage());
             let snapshot = Snapshot::from_json(&std::fs::read(input)?)?;
-            let renderer = Renderer::with_backdrop(&snapshot, Setting::Earth, backdrop)?;
-            let frames: Vec<_> = (0..FRAME_COUNT).map(|i| renderer.frame(i)).collect();
-            let gif = output::encode_gif(&frames)?;
+            let renderer = Renderer::with_backdrop(&snapshot, setting, backdrop)?;
+            let (frames, gif) = output::encode_within_budget(renderer)?;
             println!("{} frames, {} GIF bytes", frames.len(), gif.len());
             output::replace_files(
                 Path::new(directory),

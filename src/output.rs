@@ -1,5 +1,5 @@
 //! Deterministic encoders and temporary-sibling file replacement.
-use crate::voxel::{Frame, HEIGHT, TRANSPARENT, WIDTH};
+use crate::voxel::{Frame, TRANSPARENT};
 use std::{borrow::Cow, collections::BTreeMap, path::Path};
 /// One native-pixel export rectangle, shared by every loop frame and its still.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,19 +12,23 @@ pub struct ExportBounds {
     pub width: usize,
     /// Native height before the unchanged 2x export.
     pub height: usize,
+    /// Columns in the source frame's buffer.
+    pub stride: usize,
 }
 impl ExportBounds {
     fn source(self, index: usize) -> usize {
-        (self.top + index / self.width) * WIDTH + self.left + index % self.width
+        (self.top + index / self.width) * self.stride + self.left + index % self.width
     }
 }
 /// Union all opaque loop pixels and add four native pixels on each side; an opaque scene retains the full canvas.
 pub fn export_bounds(frames: &[Frame]) -> ExportBounds {
+    let (stride, rows) = (frames[0].width, frames[0].height);
     let full = ExportBounds {
         left: 0,
         top: 0,
-        width: WIDTH,
-        height: HEIGHT,
+        width: stride,
+        height: rows,
+        stride,
     };
     if !frames.iter().any(|f| f.pixels.contains(&TRANSPARENT)) {
         return full;
@@ -33,7 +37,7 @@ pub fn export_bounds(frames: &[Frame]) -> ExportBounds {
     for frame in frames {
         for (i, color) in frame.pixels.iter().enumerate() {
             if *color != TRANSPARENT {
-                let (x, y) = (i % WIDTH, i / WIDTH);
+                let (x, y) = (i % stride, i / stride);
                 let (left, top, right, bottom) = bounds.get_or_insert((x, y, x, y));
                 *left = (*left).min(x);
                 *top = (*top).min(y);
@@ -48,6 +52,7 @@ pub fn export_bounds(frames: &[Frame]) -> ExportBounds {
             top: 0,
             width: 8,
             height: 8,
+            stride,
         };
     };
     let left = left.saturating_sub(4);
@@ -55,8 +60,9 @@ pub fn export_bounds(frames: &[Frame]) -> ExportBounds {
     ExportBounds {
         left,
         top,
-        width: (right + 5).min(WIDTH) - left,
-        height: (bottom + 5).min(HEIGHT) - top,
+        width: (right + 5).min(stride) - left,
+        height: (bottom + 5).min(rows) - top,
+        stride,
     }
 }
 fn cropped_pixels(frame: &Frame, bounds: ExportBounds) -> impl Iterator<Item = [u8; 3]> + '_ {
@@ -86,10 +92,10 @@ pub fn encode_png_with_bounds(
         });
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header()?;
-        let mut pixels = Vec::with_capacity(WIDTH * HEIGHT * 12);
+        let mut pixels = Vec::with_capacity(bounds.width * bounds.height * 16);
         for y in bounds.top..bounds.top + bounds.height {
-            let row =
-                &frame.pixels[y * WIDTH + bounds.left..y * WIDTH + bounds.left + bounds.width];
+            let row = &frame.pixels
+                [y * frame.width + bounds.left..y * frame.width + bounds.left + bounds.width];
             for _ in 0..2 {
                 for color in row {
                     for _ in 0..2 {
@@ -104,6 +110,30 @@ pub fn encode_png_with_bounds(
         writer.write_image_data(&pixels)?;
     }
     Ok(bytes)
+}
+/// The most a GIF may weigh, in bytes. A profile image is fetched on every page view and committed to a repository's history.
+pub const GIF_BUDGET: usize = 1_000_000;
+/// Shares of walkers, vehicles and animated buildings to try, stopping at the first loop inside the budget.
+const DETAIL_LEVELS: [f64; 9] = [1.0, 0.7, 0.5, 0.35, 0.25, 0.15, 0.08, 0.03, 0.0];
+/// Render a loop and encode it inside [`GIF_BUDGET`], thinning the motion only as far as needed. The same snapshot always lands on the same level.
+pub fn encode_within_budget(
+    renderer: crate::render::Renderer,
+) -> Result<(Vec<Frame>, Vec<u8>), gif::EncodingError> {
+    let mut renderer = renderer;
+    let mut last = None;
+    for detail in DETAIL_LEVELS {
+        renderer = renderer.with_detail(detail);
+        let frames: Vec<_> = (0..crate::motion::FRAME_COUNT)
+            .map(|index| renderer.frame(index))
+            .collect();
+        let gif = encode_gif(&frames)?;
+        let fits = gif.len() <= GIF_BUDGET;
+        last = Some((frames, gif));
+        if fits {
+            break;
+        }
+    }
+    Ok(last.expect("the detail levels are not empty"))
 }
 /// How long the bare base frame of a cutout GIF shows, in hundredths of a second. Browsers honor two and slow anything shorter.
 const BASE_FRAME_DELAY: u16 = 2;
