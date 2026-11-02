@@ -1,6 +1,6 @@
 # git-village
 
-Draw one developer's public commits as a looping pixel-art city for their own GitHub profile README. Only public commits count, whichever token is used. Issues, reviews, pull requests, private commits, and calendar contribution totals do not count.
+Git commits build a tiny pixel-art settlement that loops on a profile README. Code languages paint the rooftops, all-time commit counts expand the city limits, streaks set the town atmosphere, and the most recent push decides the day's activity. A nightly workflow keeps the animation updated, the binary runs straight from the command line, and the Rust engine is available on crates.io.
 
 <p align="center">
   <img src="docs/village.gif" alt="The author's village, drawn from 1,697 public commits: a round island of mixed city blocks around a central plaza">
@@ -10,6 +10,7 @@ Draw one developer's public commits as a looping pixel-art city for their own Gi
 <img src="village/village.gif" alt="My commit village">
 ```
 
+## Getting started
 Set up the nightly workflow in [Getting started](docs/getting-started.md). The composite Action downloads the binary published for each release; the included workflow installs from source instead.
 
 ```sh
@@ -18,13 +19,24 @@ git-village collect octocat --output snapshot.json
 git-village render snapshot.json --output-dir village
 ```
 
-Collection requires an authenticated [GitHub CLI](https://cli.github.com/). Rendering uses the snapshot alone, without network access or a clock. Outputs are `village.gif`, `village.png`, and `preview.html`, with transparent PNG and GIF exports cropped to the loop’s shared bounds plus a four-pixel native margin; scene exports are at least 768 × 512 pixels. The GIF never exceeds 1 MB: a loop over that renders again with less motion, and the city stops growing at roughly 600,000 commits.
+Collection requires an authenticated [GitHub CLI](https://cli.github.com/). The tool outputs `village.gif`, `village.png`, and `preview.html`. Exports have transparent backgrounds and a 4px native margin to blend into GitHub light and dark modes. Adding `--background` scene draws the full sky, ocean, and retro status strip at a minimum 768 × 512 resolution. The renderer automatically tunes down frame motion to hold the GIF under 1 MB, and maximum city growth caps out around 600,000 commits.
 
-The village is drawn on a transparent canvas, so it sits directly on GitHub's light or dark page. Add `--background scene` for the sky, sea, and status strip.
+## City Simulation
+* Growth: All-time public commits expand the grid outward from the central plaza, block by block.
 
-Lifetime public commits slowly grow the city in a circle from a central plaza, block by block; yearly commits control population; monthly commits control traffic; weekly commits control construction. Each building belongs to one language, weighted by that language's commits, so languages mix through every block. The status strip shows login, stage, commits, population, mood, and language swatches. See [the design](docs/design.md) for thresholds and mood rules. At the GitHub repository cap the collector splits windows, recording `detail_truncated` if a single day still hits the cap. Snapshots store no repository names.
+* Palette: Buildings take on colors from active languages, mixed naturally across every neighborhood.
+
+* Movement: Yearly commits set population density, monthly commits drive traffic flow, and weekly commits keep construction cranes active.
+
+* Status strip: The scene view includes a retro HUD displaying handle, town stage, total commits, population count, daily mood, and language swatches.
+
+See [the design](docs/design.md) for thresholds and mood rules.
 
 Choose a look with `--setting`, or the Action's `setting` input. Earth is the default. Like the stills further down, these come from a sample account and use `--background scene`, with the status strip cropped out.
+
+## Settings
+
+Switch biomes with `--setting` or the Action's `setting` input:
 
 ```sh
 git-village render snapshot.json --output-dir village --setting mars
@@ -76,15 +88,17 @@ The most recent commits set the mood of each day's loop. A fifth mood, Workday, 
   </tr>
 </table>
 
+## Development
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 cargo run --release --example generate-sheet -- target/review
 ```
+The review generator outputs stage GIFs and visual contact sheets. The core Rust library runs deterministically across independent modules for collection, snapshot validation, development rules, mood evaluation, setting assets, layout, depth rasterization, motion, and image encoding.
 
-The review generator writes contact sheets and six stage GIFs. The deterministic library exposes collection, snapshot validation, development, mood, setting materials, layout, depth rasterization, motion, rendering, and encoding as separate modules.
+## Credits & License
 
-Inspired by [git-koi](https://github.com/yalongwastaken/git-koi), by Anthony Yalong. Adapted conventions and code are credited in [NOTICE](NOTICE).
+Inspired by [git-koi](https://github.com/yalongwastaken/git-koi), by Anthony Yalong. Adapted code and design conventions appear in [NOTICE](NOTICE).
 
-MIT license, copyright Rei Tamaru. See [LICENSE](LICENSE).
+Distributed under the MIT license, copyright Rei Tamaru. See [LICENSE](LICENSE).
