@@ -10,7 +10,7 @@ Draw one developer's public commits as a looping pixel-art city for their own Gi
 <img src="village/village.gif" alt="My commit village">
 ```
 
-Set up the nightly workflow in [Getting started](docs/getting-started.md). The composite Action requires published release binaries; until those exist, use the included workflow that installs from source.
+Set up the nightly workflow in [Getting started](docs/getting-started.md). The composite Action downloads the binary published for each release; the included workflow installs from source instead.
 
 ```sh
 cargo install --path .

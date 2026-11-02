@@ -1,5 +1,8 @@
 name: git-village
 description: Render one account's public commits for a profile README.
+branding:
+  icon: home
+  color: green
 inputs:
   login:
     description: Account login to draw.
